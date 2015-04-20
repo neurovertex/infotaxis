@@ -5,6 +5,14 @@ This library implements the infotaxis strategy for autonomous search for a diffu
 
 A main() is also provided as an example. It instanciates an InfotaxisGrid, then simulates a robot using the grid to find the diffusive source. It will output frames of each iteration to a ./pictures folder (that you'll need to create), representing the path since start on the current probability field.
 
+Building
+--------
+
+infotaxis.cpp requires C++11 compiling but no external library. main.cpp requires png++ for frames output. Then just do
+
+	cmake .
+	make
+
 Examples
 --------
 
