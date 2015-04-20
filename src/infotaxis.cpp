@@ -2,8 +2,6 @@
 #include <cmath>
 #include <iostream>
 #include <assert.h>
-#include <boost/math/distributions/poisson.hpp>
-//#include <boost/math/special_functions/bessel.hpp>
 
 #include "infotaxis.hpp"
 
@@ -117,6 +115,16 @@ namespace infotaxis {
 		return sum;
 	}
 
+	int factorial(int n)
+	{
+	  return (n == 1 || n == 0) ? 1 : factorial(n - 1) * n;
+	}
+
+	double poisson(double mean, int k)
+	{
+		return pow(mean, k) / factorial(k) * exp(-mean);
+	}
+
 	Direction InfotaxisGrid::getOptimalMove(const int x, const int y, const double dt)
 	{
 		const double entropy = this->entropy();
@@ -128,14 +136,14 @@ namespace infotaxis {
 			go_to((Direction)d, i, j);
 			if (i >= 0 && i < width_ && j >= 0 && j < height_) {
 				double prob = grid_[width_ * j + i], delta = 0, cumul = 0, p = 1, ear = expectedEncounterRate(i, j);
-				boost::math::poisson_distribution<double> distr(ear * dt);
+				double mean = ear * dt;
 				InfotaxisGrid newGrid = InfotaxisGrid(*this);
 				//cout << DIRECTIONS[d+1] <<" \t: "<< distr.mean() << endl;
-				for (int k = max(0, (int)distr.mean()-5); k < max(0, (int)distr.mean()-5)+10 && p > 0.01; k ++) {
+				for (int k = max(0, (int)mean-5); k < max(0, (int)mean-5)+10 && p > 0.01; k ++) {
 					memcpy(newGrid.grid_, this->grid_, sizeof(double) * height_ * width_);
 					newGrid.setLastTime(last_time_);
 					newGrid.updateProbas(i, j, k, last_time_ + dt);
-					p = pdf(distr, k);
+					p = poisson(mean, k);
 					double e = newGrid.entropy();
 					delta += p * (e - entropy);
 					//cout << "\tdelta : "<< delta << "\t(p=" << p << "\t,e="<< e <<")" << endl;
