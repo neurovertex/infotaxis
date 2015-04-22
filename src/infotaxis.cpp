@@ -2,6 +2,9 @@
 #include <cmath>
 #include <iostream>
 #include <assert.h>
+#include <functional>
+#include <thread>
+#include <vector>
 
 #include "infotaxis.hpp"
 
@@ -22,6 +25,7 @@ namespace infotaxis {
 		this->sensor_radius_ = sensor_radius;
 		this->last_time_ = 0;
 		this->resolution_ = resolution; // Grid resolution : edge size of its squares, in meters.
+		this->entropyCache = -1;
 
 		this->alpha_ = rate/(2*M_PI*diff);
 		this->lambda_ = sqrt(diff*part_lifetime / (1 + windvel*windvel*part_lifetime/(4*diff)));
@@ -53,6 +57,10 @@ namespace infotaxis {
 		this->lambda_ = grid.lambda_;
 
 		memcpy(this->grid_, grid.grid_, sizeof(double) * width_ * height_);
+	}
+
+	InfotaxisGrid::~InfotaxisGrid() {
+		delete grid_;
 	}
 
 	void InfotaxisGrid::setLastTime(double t)
@@ -95,6 +103,7 @@ namespace infotaxis {
 	{
 		double sum = 0;
 		double dt = t - last_time_;
+		entropyCache = -1; // Invalidate cache
 		for (int j = 0; j < height_; j ++) for (int i = 0; i < width_; i ++)
 			sum += grid_[i + width_*j] *= pow(encounterRate(x, y, i, j)*dt, n) * exp(- encounterRate(x, y, i, j)*dt);
 
@@ -107,56 +116,72 @@ namespace infotaxis {
 
 	double InfotaxisGrid::entropy()
 	{
-		double sum = 0;
+		if (entropyCache < 0) {
+			double sum = 0;
 
-		for (int i = 0; i < height_*width_; i ++)
-			sum -= (grid_[i] > 0) ? grid_[i] * log(grid_[i]) : 0; // 0*log(0) => NaN, but lim[x->0](x*log(x)) = 0 and that's what matters
-
-		return sum;
+			for (int i = 0; i < height_*width_; i ++)
+				sum -= (grid_[i] > 0) ? grid_[i] * log(grid_[i]) : 0; // 0*log(0) => NaN, but lim[x->0](x*log(x)) = 0 and that's what matters
+			entropyCache = sum;
+		}
+		return entropyCache;
 	}
 
-	int factorial(int n)
+	double InfotaxisGrid::poisson(const double mean, const int k)
 	{
-	  return (n == 1 || n == 0) ? 1 : factorial(n - 1) * n;
+		return (k == 0) ? exp(-mean) : poisson(mean, k-1) * mean / k;
 	}
 
-	double poisson(double mean, int k)
+	double InfotaxisGrid::deltaEntropy(InfotaxisGrid *grid, const int i, const int j, const double dt)
 	{
-		return pow(mean, k) / factorial(k) * exp(-mean);
+		double prob = grid->grid_[grid->width_ * j + i], delta = 0, cumul = 0, p = 1, ear = grid->expectedEncounterRate(i, j),
+					mean = ear * dt, entropy = grid->entropy();
+		InfotaxisGrid newGrid = InfotaxisGrid(*grid);
+		for (int k = max((int)mean - 10, 0); cumul < 0.9999 && k < mean + 10; k ++) {
+			cumul += p = InfotaxisGrid::poisson(mean, k);
+			memcpy(newGrid.grid_, grid->grid_, sizeof(double) * grid->height_ * grid->width_);
+			newGrid.setLastTime(grid->last_time_);
+			newGrid.updateProbas(i, j, k, grid->last_time_ + dt);
+			if (!isfinite(p)) {
+				cerr << "Non-finite poisson : "<< i <<":"<< j <<" : "<< p <<"("<< mean <<", "<< k <<")" << endl;
+				assert(false);
+			}
+			double e = newGrid.entropy(); 
+			if (!isfinite(e)) {
+				cerr << "Non-finite entropy : "<< i <<":"<< j <<" : "<< e << endl;
+				assert(false);
+			}
+			delta += p * (e - entropy);
+			//cout << "\tdelta : "<< delta << "\t(p=" << p << "\t,e="<< e <<")" << endl;
+		}
+		delta = (1-prob)* delta - prob * entropy;
+		return delta;
 	}
 
 	Direction InfotaxisGrid::getOptimalMove(const int x, const int y, const double dt)
 	{
-		const double entropy = this->entropy();
 		double best = 1;
 		Direction bestDir = STAY;
-
+		cout << "dS's : {";
+		vector<pair<Direction, future<double>>> promises;
 		for (int d = STAY; d <= SOUTH; d ++) {
 			int i = x, j = y;
 			go_to((Direction)d, i, j);
 			if (i >= 0 && i < width_ && j >= 0 && j < height_) {
-				double prob = grid_[width_ * j + i], delta = 0, cumul = 0, p = 1, ear = expectedEncounterRate(i, j);
-				double mean = ear * dt;
-				InfotaxisGrid newGrid = InfotaxisGrid(*this);
-				//cout << DIRECTIONS[d+1] <<" \t: "<< distr.mean() << endl;
-				for (int k = max(0, (int)mean-5); k < max(0, (int)mean-5)+10 && p > 0.01; k ++) {
-					memcpy(newGrid.grid_, this->grid_, sizeof(double) * height_ * width_);
-					newGrid.setLastTime(last_time_);
-					newGrid.updateProbas(i, j, k, last_time_ + dt);
-					p = poisson(mean, k);
-					double e = newGrid.entropy();
-					delta += p * (e - entropy);
-					//cout << "\tdelta : "<< delta << "\t(p=" << p << "\t,e="<< e <<")" << endl;
-				}
-				delta = (1-prob)* delta - prob * entropy;
-				//cout << "\tFinal delta : " << delta << endl;
-				if (delta < best) {
-					best = delta;
-					bestDir = (Direction) d;
-				}
+				promises.push_back(pair<Direction, future<double>>((Direction)d, 
+					async(launch::async, deltaEntropy, this,  i, j, dt)));
 			}
 		}
-		cout << "Best dS : "<< DIRECTIONS[bestDir +1] << " : "<< best << endl;
+
+		for (auto&& p : promises) {
+			double val = get<1>(p).get();
+			cout << DIRECTIONS[get<0>(p)> +1][0] <<":"<< val << ",";
+			if (val < best) {
+				best = val;
+				bestDir = get<0>(p);
+			}
+		}
+
+		cout << "Best dS : "<< DIRECTIONS[bestDir +1] << " : "<< best << ")" << endl;
 		if (best == 1)
 			cerr << "Error : no direction results in information gain (not supposed to happen)" << endl; // Yeah sure it's not, well I'm gonna check anyway
 		return bestDir;

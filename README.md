@@ -27,6 +27,10 @@ Same wind, sensor radius = 0.1
 
 ![gif](http://i.imgur.com/vyUG5eG.gif)
 
+Here's what happens when it doesn't detect anything (Artificially. With no wind)
+
+![gif](http://i.imgur.com/QyuMeP6.gif)
+
 -------------
 <sub>[1] RistiCampus c, B., Skvortsov, A., & Walker, A. (2014). Autonomous search for a diffusive source in an unknown structured environment. Entropy, 16, 789–813. doi:10.3390/e16020789</sub>
 

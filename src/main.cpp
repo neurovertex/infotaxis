@@ -61,15 +61,21 @@ void write_image(string filename, double *array, int w, int h, struct simul *sim
 		for (Trace t : simul->backtrace) {
 			rgb_pixel color = (t.detections == 0) ? rgb_pixel(64, 128, 128) : rgb_pixel(255 - (128/t.detections), 64, 64);
 			for (int j = 1; j < max(ratio-1, 2); j ++)
-				for (int i = 1; i < max(ratio-1, 2); i ++)
+				for (int i = 1; i < max(ratio-1, 2); i ++) {
 					image[imgh-1-(t.y * ratio + j)][t.x * ratio + i] = color;
+				}
 		}
 
 		int x = simul->curx * ratio + ratio/2;
 		int y = simul->cury * ratio + ratio/2;
 		for (int i = 0; i <= 10; i ++) {
-			image[imgh-y+4-i][x-5+i] = rgb_pixel(255, 128, 0);
-			image[imgh-y+4-i][x+5-i] = rgb_pixel(255, 128, 0);
+			if (imgh-y+4-i >= 0 && imgh-y+4-i < imgh) {
+				if (x-5+i >= 0 && x-5+i < imgw)
+					image[imgh-y+4-i][x-5+i] = rgb_pixel(255, 128, 0);
+				
+				if (x+5-i >= 0 && x+5-i < imgw)
+					image[imgh-y+4-i][x+5-i] = rgb_pixel(255, 128, 0);
+			}
 		}
 	}
 
@@ -82,7 +88,7 @@ void write_image(string filename, double *array, int w, int h) {
 
 int main() {
 	const int w=100, h=100, x0 = w/2, y0 = h/2+10, ttl = 400;
-	const double diff=1, rate=1, windagl = -M_PI/2, windvel = 1, a = .1, dt = 1, resolution = 0.05;
+	const double diff=1, rate=1, windagl = -M_PI/2, windvel = 2, a = .1, dt = 1, resolution = 0.05;
 	InfotaxisGrid grid(w, h, diff, rate, windvel, windagl, ttl, a, resolution);
 	struct simul simul = {w/4, h/4, 0, &grid};
 	char *filename = new char[64];
