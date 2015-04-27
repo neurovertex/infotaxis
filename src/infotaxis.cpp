@@ -1,10 +1,10 @@
 #include <string.h>
 #include <cmath>
 #include <iostream>
-#include <assert.h>
 #include <functional>
 #include <thread>
 #include <vector>
+#include <assert.h>
 
 #include "infotaxis.hpp"
 
@@ -133,7 +133,7 @@ namespace infotaxis {
 
 	double InfotaxisGrid::deltaEntropy(InfotaxisGrid *grid, const int i, const int j, const double dt)
 	{
-		double prob = grid->grid_[grid->width_ * j + i], delta = 0, cumul = 0, p = 1, ear = grid->expectedEncounterRate(i, j),
+		double prob = grid->grid_[grid->width_ * j + i], delta = 0, cumul = 0, p, ear = grid->expectedEncounterRate(i, j),
 					mean = ear * dt, entropy = grid->entropy();
 		InfotaxisGrid newGrid = InfotaxisGrid(*grid);
 		for (int k = max((int)mean - 10, 0); cumul < 0.9999 && k < mean + 10; k ++) {
@@ -199,4 +199,66 @@ namespace infotaxis {
 		x += dx;
 		y += dy;
 	}
+
+#ifdef PNGPP_PNG_HPP_INCLUDED
+    using namespace png;
+
+	rgb_pixel getColour(double absv, double relv)
+	{
+		double value = min((int)(relv*32)*8, 255);
+		byte b = (byte)(value * cos(absv*M_PI/2)),
+				r = (byte)(value * sin(absv*M_PI/2)),
+				g = b;
+		//cout << "relv : " << relv << ", absv : " << absv << ", rgb : "<< r <<":"<< g <<":"<< b << endl;
+		return rgb_pixel(r, g, b);
+	}
+
+	void drawArray(image<rgb_pixel> &image, const double *array, const int w, const int h, const int ratio, const bool absolute = true)
+	{
+		const int imgw = w * ratio, imgh = h * ratio;
+		double mi = INFINITY, ma = -INFINITY;
+		double *values = new double[w*h];
+		for (int i = 0; i < h; i ++)
+			for (int j = 0; j < w; j ++) {
+				double raw = array[i*w + j], val = (raw);
+				if (std::isinf(raw))
+					cerr << "Infinite : "<< j << ":"<< i << endl;
+				else if (std::isnan(raw))
+					cerr << "NaN : "<< j << ":"<< i << endl;
+				//cout << raw << endl;
+				if (!std::isnan(val) && !std::isinf(val)) {
+					mi = min(mi, val);
+					ma = max(ma, val);
+				} else
+					val = min(max(val, mi), ma);
+				values[i*w + j] = val;
+			}
+
+		double scale = (ma != mi) ? ma-mi : 1;
+
+		for (int i = 0; i < imgh; i ++)
+			for (int j = 0; j < imgw; j ++) {
+		//		cout << j << ":" << i <<" =>\t" << values[i*w/ratio + j/ratio] << endl;
+				image[imgh-1-i][j] = getColour(
+						absolute ? values[i/ratio*w + j/ratio] : 0,
+						(values[i/ratio*w + j/ratio]-mi)/scale);
+			}
+		cout << "min-max: "<< mi <<":"<< ma << endl;
+	}
+
+	void InfotaxisGrid::writeProbabilityField(png::image<png::rgb_pixel> &image, const int ratio)
+	{
+		drawArray(image, grid_, width_, height_, ratio);
+	}
+	void InfotaxisGrid::writeMeanStationaryField(png::image<png::rgb_pixel> &image, const int x0, const int y0, const int ratio)
+	{
+		double *array = new double[width_*height_];
+		for (int y = 0; y < height_; y ++)
+			for (int x = 0; x < width_; x ++)
+				array[y * width_ + x] = log(concentration(x, y, x0, y0));
+
+		drawArray(image, array, width_, height_, ratio, false);
+	}
+
+#endif
 }

@@ -8,10 +8,16 @@ A main() is also provided as an example. It instanciates an InfotaxisGrid, then 
 Building
 --------
 
-infotaxis.cpp requires C++11 compiling but no external library. main.cpp requires png++ for frames output. Then just do
+The sources require C++11 compiling and png++/libpng. Then just do
 
 	cmake .
 	make
+	
+CMake will check for libpng, but won't check for png++'s header's presence, and so trying to compile without it will fail in make.
+	
+### Without libpng
+
+libpng is strictly required for main.cpp, but you can build the library without it. If libpng isn't found or if you manually specify -DINFOTAXIS_NOPNG to cmake, main.cpp won't be compiled, and infotaxis.cpp will be compiled without png-related methods.
 
 Examples
 --------

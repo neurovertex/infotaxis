@@ -1,4 +1,10 @@
+#ifndef INFOTAXIS_HPP_INCLUDED
+#define INFOTAXIS_HPP_INCLUDED
+
 #include <future>
+#ifndef INFOTAXIS_NOPNG
+#include <png++/png.hpp>
+#endif
 
 namespace infotaxis {
 
@@ -28,6 +34,12 @@ namespace infotaxis {
 		void updateProbas(int x, int y, int n, double t);
 		void setLastTime(double t);
 		Direction getOptimalMove(int x, int y, double dt);
+		int getWidth() { return width_; };
+		int getHeight() { return height_; };
+#ifdef PNGPP_PNG_HPP_INCLUDED
+		void writeProbabilityField(png::image<png::rgb_pixel> &image, int ratio);
+		void writeMeanStationaryField(png::image<png::rgb_pixel> &image, int x0, int y0, int ratio);
+#endif
 		static double poisson(double mean, int k);
 	private:
 		double *grid_,
@@ -39,3 +51,5 @@ namespace infotaxis {
 		static double deltaEntropy(InfotaxisGrid *grid, const int i, const int j, const double dt);
 	};
 }
+
+#endif
