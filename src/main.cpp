@@ -5,7 +5,7 @@
 
 #ifdef INFOTAXIS_NO_PROFILING
 #define PROFILE(cmd)
-#define MSECONDS(time) time
+#define MSECONDS(time) (double)(.0)
 #else
 #include <time.h>
 #define PROFILE(cmd) if (profiling) cmd;
@@ -60,7 +60,7 @@ int main(int argc, char **argv) {
 		("resolution,r", po::value<double>(&resolution)->default_value(resolution), "Sets how much grid squares one m equals to (in dots per meter)")
 		("fast,f", "Sets the simulator to not use true Infotaxis (Minimize entropy) but instead go where detection is the most probable")
 		("nodraw,nd", "Disable frame-per-frame image output. Mean stationary field will still be written.")
-#ifdef _TIME_H
+#ifndef INFOTAXIS_NO_PROFILING
 		("profiling,p", "Enable profiling. Will output a summary of system time taken by respective functions");
 		double timeratio;
 		{
@@ -109,7 +109,10 @@ int main(int argc, char **argv) {
 	draw = vm.count("nodraw") == 0;
 	fast = vm.count("fast") > 0;
 #ifdef INFOTAXIS_NO_PROFILING
-	if (vm.countEnable is disabled. time.h was not found or INFOTAXIS_NO_PROFILING was passed during compilation
+	if (vm.count("profiling") > 0) {
+		cerr << "Enable is disabled. time.h was not found or INFOTAXIS_NO_PROFILING was passed during compilation" << endl;
+		return -1;
+	}
 #else
 	profiling = vm.count("profiling") > 0;
 #endif
@@ -164,7 +167,7 @@ int main(int argc, char **argv) {
 		else
 			cout << "Source not found after " << cnt << " iterations" << endl;
 
-		
+
 		if (profiling) {
 			for (int i = 1; i < cnt; i ++) {
 				looptime[0] += looptime[i];
