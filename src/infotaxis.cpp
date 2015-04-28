@@ -12,7 +12,7 @@ using namespace std;
 
 namespace infotaxis {
 
-	InfotaxisGrid::InfotaxisGrid(int width, int height, double diff, double rate, double windvel, double windang, double part_lifetime, double sensor_radius, double resolution) 
+	InfotaxisGrid::InfotaxisGrid(int width, int height, double diff, double rate, double windvel, double windang, double part_lifetime, double sensor_radius, double resolution, bool trueInfotaxis)
 	{
 		this->width_ = width;
 		this->height_ = height;
@@ -24,7 +24,8 @@ namespace infotaxis {
 		this->part_lifetime_ = part_lifetime;
 		this->sensor_radius_ = sensor_radius;
 		this->last_time_ = 0;
-		this->resolution_ = resolution; // Grid resolution : edge size of its squares, in meters.
+		this->resolution_ = resolution; // Grid resolution : squares per meter
+		this->trueInfotaxis_ = trueInfotaxis;
 		this->entropyCache = -1;
 
 		this->alpha_ = rate/(2*M_PI*diff);
@@ -75,8 +76,8 @@ namespace infotaxis {
 
 	double InfotaxisGrid::concentration(int x, int y, int x0, int y0)
 	{
-		double dist = max(0.001, hypot(x-x0, y-y0)) * resolution_;
-		double val = rate_/(4*M_PI*diff_*dist) * exp((sin(windang_)*(y-y0) + cos(windang_)*(x-x0))*resolution_*windvel_/(2*diff_) - dist/lambda_);
+		double dist = max(0.001, hypot(x-x0, y-y0)) / resolution_;
+		double val = rate_/(4*M_PI*diff_*dist) * exp((sin(windang_)*(y-y0) + cos(windang_)*(x-x0))/resolution_*windvel_/(2*diff_) - dist/lambda_);
 		return val;
 	}
 
@@ -131,8 +132,9 @@ namespace infotaxis {
 		return (k == 0) ? exp(-mean) : poisson(mean, k-1) * mean / k;
 	}
 
-	double InfotaxisGrid::deltaEntropy(InfotaxisGrid *grid, const int i, const int j, const double dt)
+	double InfotaxisGrid::deltaEntropy(const int i, const int j, const double dt)
 	{
+		InfotaxisGrid *grid = this;
 		double prob = grid->grid_[grid->width_ * j + i], delta = 0, cumul = 0, p, ear = grid->expectedEncounterRate(i, j),
 					mean = ear * dt, entropy = grid->entropy();
 		InfotaxisGrid newGrid = InfotaxisGrid(*grid);
@@ -153,13 +155,13 @@ namespace infotaxis {
 			delta += p * (e - entropy);
 			//cout << "\tdelta : "<< delta << "\t(p=" << p << "\t,e="<< e <<")" << endl;
 		}
-		delta = (1-prob)* delta - prob * entropy;
+		delta =  prob * entropy - (1-prob)* delta;
 		return delta;
 	}
 
 	Direction InfotaxisGrid::getOptimalMove(const int x, const int y, const double dt)
 	{
-		double best = 1;
+		double best = -1;
 		Direction bestDir = STAY;
 		cout << "dS's : {";
 		vector<pair<Direction, future<double>>> promises;
@@ -167,15 +169,20 @@ namespace infotaxis {
 			int i = x, j = y;
 			go_to((Direction)d, i, j);
 			if (i >= 0 && i < width_ && j >= 0 && j < height_) {
-				promises.push_back(pair<Direction, future<double>>((Direction)d, 
-					async(launch::async, deltaEntropy, this,  i, j, dt)));
+				if (trueInfotaxis_)
+					promises.push_back(pair<Direction, future<double>>((Direction)d, 
+						async(launch::async, &InfotaxisGrid::deltaEntropy, this,  i, j, dt)));
+				else
+					promises.push_back(pair<Direction, future<double>>((Direction)d, 
+						async(launch::async, &InfotaxisGrid::expectedEncounterRate, this,  i, j)));
 			}
 		}
 
 		for (auto&& p : promises) {
 			double val = get<1>(p).get();
 			cout << DIRECTIONS[get<0>(p)> +1][0] <<":"<< val << ",";
-			if (val < best) {
+			assert(isfinite(val));
+			if (val > best) {
 				best = val;
 				bestDir = get<0>(p);
 			}

@@ -8,7 +8,7 @@ A main() is also provided as an example. It instanciates an InfotaxisGrid, then 
 Building
 --------
 
-The sources require C++11 compiling and png++/libpng. Then just do
+The sources require C++11 compiling and png++/libpng, additionally main.cpp requires boost. Then just do
 
 	cmake .
 	make
@@ -18,6 +18,16 @@ CMake will check for libpng, but won't check for png++'s header's presence, and 
 ### Without libpng
 
 libpng is strictly required for main.cpp, but you can build the library without it. If libpng isn't found or if you manually specify -DINFOTAXIS_NOPNG to cmake, main.cpp won't be compiled, and infotaxis.cpp will be compiled without png-related methods.
+
+True vs Fast Infotaxis
+----------------------
+
+One goal of this library was also to test several methods for driving the robot, i.e selecting the direction to go toward next.
+
+- The "true" infotaxis method (as exposed in the referenced articles) implies calculating the expected encounter rate at the given neighboring cell, and from that, calculating the expected diminution of entropy, and going wherever this value is the highest in absolute value. This process takes a hell lot of processing, since it implies duplicating the grid, and simulating several cases of detection , in all 5 directions (4 sides, and staying in place).
+- An alternative method, which is used if an InfotaxisGrid is created with `trueInfotaxis=false`, goes where detection is expected to be the most probable. So it computes the expected encounter rate like previously, and simply goes where this value is maximized.
+
+You can test the alternative method in *main* by passing `-f` / `--fast` . Speedups of 5x~10x per iteration are observed on a 100x100 grid, however the increase in search time, as well as its robustness, are yet to experiment for, particularly in an increased grid size.
 
 Examples
 --------

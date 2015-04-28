@@ -23,7 +23,7 @@ namespace infotaxis {
 	class InfotaxisGrid
 	{
 	public:
-		InfotaxisGrid(int width, int height, double diff, double rate, double windvel, double windang, double part_lifetime, double sensor_radius, double resolution_);
+		InfotaxisGrid(int width, int height, double diff, double rate, double windvel, double windang, double part_lifetime, double sensor_radius, double resolution_, bool trueInfotaxis = true);
 		InfotaxisGrid(const InfotaxisGrid &grid); // Clone constructor
 		~InfotaxisGrid();
 		double *operator[](int x);
@@ -48,7 +48,8 @@ namespace infotaxis {
 				sensor_radius_, last_time_, resolution_,
 				entropyCache;
 		int width_, height_;
-		static double deltaEntropy(InfotaxisGrid *grid, const int i, const int j, const double dt);
+		bool trueInfotaxis_;
+		double deltaEntropy(const int i, const int j, const double dt);
 	};
 }
 
