@@ -32,7 +32,6 @@ namespace infotaxis {
 		double expectedEncounterRate(int x, int y);
 		double entropy();
 		void updateProbas(int x, int y, int n, double t);
-		void setLastTime(double t);
 		Direction getOptimalMove(int x, int y, double dt);
 		int getWidth() { return width_; };
 		int getHeight() { return height_; };
@@ -45,7 +44,7 @@ namespace infotaxis {
 		double *grid_,
 				diff_, rate_, windvel_, windang_, 
 				part_lifetime_, alpha_, lambda_, 
-				sensor_radius_, last_time_, resolution_,
+				sensor_radius_, resolution_,
 				entropyCache;
 		int width_, height_;
 		bool trueInfotaxis_;

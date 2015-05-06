@@ -23,15 +23,12 @@ namespace infotaxis {
 		this->windang_ = windang;
 		this->part_lifetime_ = part_lifetime;
 		this->sensor_radius_ = sensor_radius;
-		this->last_time_ = 0;
 		this->resolution_ = resolution; // Grid resolution : squares per meter
 		this->trueInfotaxis_ = trueInfotaxis;
 		this->entropyCache = -1;
 
 		this->alpha_ = rate/(2*M_PI*diff);
 		this->lambda_ = sqrt(diff*part_lifetime / (1 + windvel*windvel*part_lifetime/(4*diff)));
-
-		cout << "alpha : "<< alpha_ << ", lambda : "<< lambda_ << endl;
 
 		assert(lambda_ > sensor_radius_); // Encounter rate equation won't work if ln(lambda_/sensor_radius_) <= 0
 
@@ -52,7 +49,6 @@ namespace infotaxis {
 		this->windang_ = grid.windang_;
 		this->part_lifetime_ = grid.part_lifetime_;
 		this->sensor_radius_ = grid.sensor_radius_;
-		this->last_time_ = grid.last_time_;
 		this->resolution_ = grid.resolution_;
 		this->alpha_ = grid.alpha_;
 		this->lambda_ = grid.lambda_;
@@ -62,11 +58,6 @@ namespace infotaxis {
 
 	InfotaxisGrid::~InfotaxisGrid() {
 		delete grid_;
-	}
-
-	void InfotaxisGrid::setLastTime(double t)
-	{
-		this->last_time_ = t;
 	}
 
 	double *InfotaxisGrid::operator[](int y)
@@ -100,10 +91,9 @@ namespace infotaxis {
 		return sum;
 	}
 
-	void InfotaxisGrid::updateProbas(int x, int y, int n, double t)
+	void InfotaxisGrid::updateProbas(int x, int y, int n, double dt)
 	{
 		double sum = 0;
-		double dt = t - last_time_;
 		entropyCache = -1; // Invalidate cache
 		for (int j = 0; j < height_; j ++) for (int i = 0; i < width_; i ++)
 			sum += grid_[i + width_*j] *= pow(encounterRate(x, y, i, j)*dt, n) * exp(- encounterRate(x, y, i, j)*dt);
@@ -112,7 +102,6 @@ namespace infotaxis {
 		for (int j = 0; j < height_; j ++) for (int i = 0; i < width_; i ++)
 			grid_[i + width_*j] /= sum;
 
-		setLastTime(t);
 	}
 
 	double InfotaxisGrid::entropy()
@@ -141,8 +130,7 @@ namespace infotaxis {
 		for (int k = max((int)mean - 10, 0); cumul < 0.9999 && k < mean + 10; k ++) {
 			cumul += p = InfotaxisGrid::poisson(mean, k);
 			memcpy(newGrid.grid_, grid->grid_, sizeof(double) * grid->height_ * grid->width_);
-			newGrid.setLastTime(grid->last_time_);
-			newGrid.updateProbas(i, j, k, grid->last_time_ + dt);
+			newGrid.updateProbas(i, j, k, dt);
 			if (!isfinite(p)) {
 				cerr << "Non-finite poisson : "<< i <<":"<< j <<" : "<< p <<"("<< mean <<", "<< k <<")" << endl;
 				assert(false);
@@ -153,7 +141,6 @@ namespace infotaxis {
 				assert(false);
 			}
 			delta += p * (e - entropy);
-			//cout << "\tdelta : "<< delta << "\t(p=" << p << "\t,e="<< e <<")" << endl;
 		}
 		delta =  prob * entropy - (1-prob)* delta;
 		return delta;
@@ -163,7 +150,6 @@ namespace infotaxis {
 	{
 		double best = -1;
 		Direction bestDir = STAY;
-		cout << "dS's : {";
 		vector<pair<Direction, future<double>>> promises;
 		for (int d = STAY; d <= SOUTH; d ++) {
 			int i = x, j = y;
@@ -180,7 +166,6 @@ namespace infotaxis {
 
 		for (auto&& p : promises) {
 			double val = get<1>(p).get();
-			cout << DIRECTIONS[get<0>(p)> +1][0] <<":"<< val << ",";
 			assert(isfinite(val));
 			if (val > best) {
 				best = val;
@@ -188,7 +173,6 @@ namespace infotaxis {
 			}
 		}
 
-		cout << "Best dS : "<< DIRECTIONS[bestDir +1] << " : "<< best << ")" << endl;
 		if (best == 1)
 			cerr << "Error : no direction results in information gain (not supposed to happen)" << endl; // Yeah sure it's not, well I'm gonna check anyway
 		return bestDir;
@@ -216,7 +200,6 @@ namespace infotaxis {
 		byte b = (byte)(value * cos(absv*M_PI/2)),
 				r = (byte)(value * sin(absv*M_PI/2)),
 				g = b;
-		//cout << "relv : " << relv << ", absv : " << absv << ", rgb : "<< r <<":"<< g <<":"<< b << endl;
 		return rgb_pixel(r, g, b);
 	}
 
@@ -232,7 +215,6 @@ namespace infotaxis {
 					cerr << "Infinite : "<< j << ":"<< i << endl;
 				else if (std::isnan(raw))
 					cerr << "NaN : "<< j << ":"<< i << endl;
-				//cout << raw << endl;
 				if (!std::isnan(val) && !std::isinf(val)) {
 					mi = min(mi, val);
 					ma = max(ma, val);
@@ -245,12 +227,10 @@ namespace infotaxis {
 
 		for (int i = 0; i < imgh; i ++)
 			for (int j = 0; j < imgw; j ++) {
-		//		cout << j << ":" << i <<" =>\t" << values[i*w/ratio + j/ratio] << endl;
 				image[imgh-1-i][j] = getColour(
 						absolute ? values[i/ratio*w + j/ratio] : 0,
 						(values[i/ratio*w + j/ratio]-mi)/scale);
 			}
-		cout << "min-max: "<< mi <<":"<< ma << endl;
 	}
 
 	void InfotaxisGrid::writeProbabilityField(png::image<png::rgb_pixel> &image, const int ratio)

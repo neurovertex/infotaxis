@@ -25,30 +25,28 @@ typedef struct simultrace {
 
 struct simul {
 	int curx, cury;
-	double time;
 	InfotaxisGrid *grid;
 	list<Trace> backtrace;
 };
 
 void writeProbas(string filename, struct simul &simul, const int ratio, const int *x0 = NULL, const int *y0 = NULL);
 
-
+void simulate(struct simul &simul, int x0, int y0, double dt, bool profiling, bool draw, ofstream *logfile, bool quiet);
 
 int main(int argc, char **argv) {
-	int w = -1, h = -1, x0 = w / 2, y0 = h / 2 + 10, ttl = 400;
+	int w = -1, h = -1, x0, y0, startx, starty, ttl = 400;
 	double diff = 1, rate = 1, windagl = -M_PI / 2, windvel = 1, a = 1, dt = 1, resolution = 20.;
-	string mode = "simulate";
-	bool fast = false, draw = true, profiling = false;
-	long 	*looptime	= new long[MAX_ITERATIONS],
-			*updatetime = new long[MAX_ITERATIONS],
-			*optimtime 	= new long[MAX_ITERATIONS],
-			*drawtime 	= new long[MAX_ITERATIONS];
+	ofstream *logfile = NULL;
+	string meanfield;
+	bool nosimulate = false, fast = false, draw = true, profiling = false, quiet;
 
 	po::options_description desc("All options");
 	desc.add_options()
 		("help,h", "Displays help message")
-		("mode,m", po::value<string>(&mode), "Sets the mode (simulate or concentration)")
-		("size,s", po::value<string>(), "Sets the grid dimentions (format w:h, in squares), required")
+		("nosimulate", "Disables simulation")
+		("meanfield,m", po::value<string>(&meanfield)->default_value(""), "Prints the mean stationary field of the gas concentration to <file>")
+		("size", po::value<string>(), "Sets the grid dimentions (format w:h, in squares), required")
+		("start,s", po::value<string>()->default_value("random"), "Sets the robot initial position (format x:y or \"random\")")
 		("source,S", po::value<string>()->default_value("random"), "Sets the gas source position (format x:y or \"random\")")
 		("deltat,t", po::value<double>(&dt)->default_value(dt), "Sets the delta-t of the search, i.e how much time is spent on each step. (in s)")
 		("ttl,T", po::value<int>(&ttl)->default_value(ttl), "Sets the particles's expected lifetime (in s)")
@@ -59,15 +57,11 @@ int main(int argc, char **argv) {
 		("sensorradius,a", po::value<double>(&a)->default_value(a), "Sets the sensor radius (in m)")
 		("resolution,r", po::value<double>(&resolution)->default_value(resolution), "Sets how much grid squares one m equals to (in dots per meter)")
 		("fast,f", "Sets the simulator to not use true Infotaxis (Minimize entropy) but instead go where detection is the most probable")
-		("nodraw,nd", "Disable frame-per-frame image output. Mean stationary field will still be written.")
+		("nodraw,n", "Disable frame-per-frame image output. Mean stationary field will still be written.")
+		("quiet,q", "Disable all normal output, only print final iteration count after simulation.")
+		("log,l", po::value<string>(), "Logs position and entropy")
 #ifndef INFOTAXIS_NO_PROFILING
 		("profiling,p", "Enable profiling. Will output a summary of system time taken by respective functions");
-		double timeratio;
-		{
-			struct timespec spec;
-			clock_getres(CLOCK_PROCESS_CPUTIME_ID, &spec);
-			timeratio = spec.tv_sec + (spec.tv_nsec / 1000000000.);
-		}
 #else
 		;
 #endif
@@ -75,7 +69,7 @@ int main(int argc, char **argv) {
 	po::store(po::command_line_parser(argc, argv).options(desc).run(), vm);
 	po::notify(vm);
 
-	if (vm.count("help")) {
+	if (vm.count("help") > 0) {
 		cout << desc;
 		return 0;
 	}
@@ -106,6 +100,21 @@ int main(int argc, char **argv) {
 		cerr << "Error : Source coordinates out of bounds" << endl;
 		return -1;
 	}
+
+	if (vm["start"].as<string>() == "random") {
+		srand(time(NULL));
+		startx = rand() % w;
+		starty = rand() % h;
+	} else {
+		char dummy;
+		stringstream(vm["start"].as<string>()) >> startx >> dummy >> starty;
+	}
+	if (startx < 0 || starty < 0 || startx >= w || starty >= h) {
+		cerr << "Error : Initial coordinates out of bounds" << endl;
+		return -1;
+	}
+
+	nosimulate = vm.count("nosimulate") > 0;
 	draw = vm.count("nodraw") == 0;
 	fast = vm.count("fast") > 0;
 #ifdef INFOTAXIS_NO_PROFILING
@@ -116,87 +125,119 @@ int main(int argc, char **argv) {
 #else
 	profiling = vm.count("profiling") > 0;
 #endif
+	logfile = (vm.count("log") > 0) ? new ofstream(vm["log"].as<string>()) : NULL;
+	quiet = vm.count("quiet") > 0;
+
+	if (nosimulate && meanfield == "") {
+		cerr << "Simulation and meanfield output disabled. Nothing to do" << endl;
+		exit(-1);
+	}
 
 	InfotaxisGrid grid(w, h, diff, rate, windvel, windagl, ttl, a, resolution, !fast);
-	struct simul simul = {w / 4, h / 4, 0, &grid};
+	struct simul simul = {startx, starty, &grid};
 
-	if (mode == "simulate") {
-		char *filename = new char[64];
-		int cnt = 0;
-		std::default_random_engine gen;
-		gen.seed(time(NULL));
+	if (logfile != NULL)
+		*logfile << resolution << '\n' << endl;
 
-		do {
-			PROFILE(looptime[cnt] = (long) -clock();)
-			double mean = grid.encounterRate(simul.curx, simul.cury, x0, y0) * dt;
+	if (!nosimulate) {
+		simulate(simul, x0, y0, dt, profiling, draw, logfile, quiet);
+	}
+
+	if (logfile != NULL) {
+		*logfile << flush;
+		logfile->close();
+	}
+
+	if (draw && !nosimulate && meanfield == "")
+		writeProbas("pictures/meanfield.png", simul, 5, &x0, &y0);
+	else if (meanfield != "")
+		writeProbas(meanfield, simul, 5, &x0, &y0);
+
+}
+
+void simulate(struct simul &simul, int x0, int y0, double dt, bool profiling, bool draw, ofstream *logfile, bool quiet) {
+	char *filename = new char[64];
+	long 	*looptime = new long[4 * MAX_ITERATIONS], // Slicing the buffer in 4
+			*updatetime = looptime + MAX_ITERATIONS,
+			*optimtime = updatetime + MAX_ITERATIONS,
+			*drawtime = optimtime + MAX_ITERATIONS;
+	InfotaxisGrid &grid = *simul.grid;
+	int cnt = 0;
+	std::default_random_engine gen;
+	gen.seed(time(NULL));
+#ifndef INFOTAXIS_NO_PROFILING
+	double timeratio;
+	{
+		struct timespec spec;
+		clock_getres(CLOCK_PROCESS_CPUTIME_ID, &spec);
+		timeratio = spec.tv_sec + (spec.tv_nsec / 1000000000.);
+	}
+#endif
+
+	do {
+		PROFILE(looptime[cnt] = (long) -clock();)
+		double mean = grid.encounterRate(simul.curx, simul.cury, x0, y0) * dt, entropy = grid.entropy();
+		if (!quiet)
 			cout << cnt << " : " << simul.curx << ":" << simul.cury << " => mean " << mean;
-			poisson_distribution<int> pdist(mean);
-			gen(); // Creating a variate_generator with gen seeds it from gen's value without modifying gen.
-			//Thus we need to iterate gen to avoid reseeding the generator with the same value every iteration
-			int detects = pdist(gen);
+		poisson_distribution<int> pdist(mean);
+		gen(); // Creating a variate_generator with gen seeds it from gen's value without modifying gen.
+		//Thus we need to iterate gen to avoid reseeding the generator with the same value every iteration
+		int detects = pdist(gen);
+		
+		if (!quiet)
+			cout << ", detections : " << detects << ", entropy : " << entropy << endl;
 
-			PROFILE(updatetime[cnt] = (long)-clock();)
-			grid.updateProbas(simul.curx, simul.cury, detects, simul.time);
-			PROFILE(updatetime[cnt] += clock();)
+		if (logfile != NULL)
+			*logfile << simul.curx <<" "<< simul.cury <<" "<< entropy <<" "<< detects << endl;
 
-			cout << ", detections : " << detects << ", entropy : " << grid.entropy() << endl;
-			simul.time += dt;
+		PROFILE(updatetime[cnt] = (long)-clock();)
+		grid.updateProbas(simul.curx, simul.cury, detects, dt);
+		PROFILE(updatetime[cnt] += clock();)
 
-			PROFILE(optimtime[cnt] = (long) -clock();)
-			Direction optimal = grid.getOptimalMove(simul.curx, simul.cury, dt);
-			PROFILE(optimtime[cnt] += clock();)
+		PROFILE(optimtime[cnt] = (long) -clock();)
+		Direction optimal = grid.getOptimalMove(simul.curx, simul.cury, dt);
+		PROFILE(optimtime[cnt] += clock();)
 
-			//cout << ", optimal move : "<< DIRECTIONS[optimal+1] << "("<< optimal <<")" << endl;
-			sprintf(filename, "pictures/iteration%04d.png", cnt);
-			if (draw) {
-				PROFILE(drawtime[cnt] = (long)-clock());
-				writeProbas(filename, simul, 5, NULL);
-				PROFILE(drawtime[cnt] += clock();)
-			}
-			simul.backtrace.push_front({simul.curx, simul.cury, detects});
-			go_to(optimal, simul.curx, simul.cury);
-			PROFILE(looptime[cnt] += clock();)
-			PROFILE(printf("Time : loop=%5.5fms, update=%5.5fms, opmital find=%5.5fms, drawtime=%-10sms\n", MSECONDS(looptime[cnt]), MSECONDS(updatetime[cnt]), MSECONDS(optimtime[cnt]), (draw ? to_string(MSECONDS(drawtime[cnt])) : "N/A").c_str());)
-		} while ((simul.curx != x0 || simul.cury != y0) && cnt++ < MAX_ITERATIONS);
 		sprintf(filename, "pictures/iteration%04d.png", cnt);
-		if (draw)
-			writeProbas(filename, simul, 5, NULL, NULL);
+		if (draw) {
+			PROFILE(drawtime[cnt] = (long)-clock());
+			writeProbas(filename, simul, 5, NULL);
+			PROFILE(drawtime[cnt] += clock();)
+		}
+		simul.backtrace.push_front({simul.curx, simul.cury, detects});
+		go_to(optimal, simul.curx, simul.cury);
+		PROFILE(looptime[cnt] += clock();)
+		PROFILE(printf("Time : loop=%5.5fms, update=%5.5fms, opmital find=%5.5fms, drawtime=%-10sms\n", MSECONDS(looptime[cnt]), MSECONDS(updatetime[cnt]), MSECONDS(optimtime[cnt]), (draw ? to_string(MSECONDS(drawtime[cnt])) : "N/A").c_str());)
+	} while (cnt++ < MAX_ITERATIONS && (simul.curx != x0 || simul.cury != y0));
+	sprintf(filename, "pictures/iteration%04d.png", cnt);
+	if (draw)
+		writeProbas(filename, simul, 5, NULL, NULL);
 
+	if (!quiet) {
 		if (simul.curx == x0 && simul.cury == y0)
 			cout << "Source found after " << cnt << " iterations at " << x0 << ":" << y0 << " !" << endl;
 		else
 			cout << "Source not found after " << cnt << " iterations" << endl;
-
-
-		if (profiling) {
-			for (int i = 1; i < cnt; i ++) {
-				looptime[0] += looptime[i];
-				updatetime[0] += updatetime[i];
-				optimtime[0] += optimtime[i];
-				drawtime[0] += drawtime[i];
-			}
-			printf("Mean time : \n\tloop = % 5.5fms\n\tupdate = % 5.5fms\n\topmital find = % 5.5fms\n\tdrawtime = %-10sms\n", MSECONDS(looptime[0]/cnt), MSECONDS(updatetime[0]/cnt), MSECONDS(optimtime[0]/cnt), (draw ? to_string(MSECONDS(drawtime[0]/cnt)) : "N/A").c_str());
-		}
-	} else if (vm["mode"].as<string>() != "concentration") {
-		cerr << "Unrecognized --mode : "<< vm["mode"].as<string>() << endl;
-		return -1;
+	} else {
+		cout << cnt << flush;
 	}
 
-	writeProbas("pictures/meanfield.png", simul, 5, &x0, &y0);
 
-
-
-	cout << "Options : --mode="<< mode << " --size="<< w <<":"<< h <<" --source="<< x0 <<":"<< y0 <<" --deltat="<< dt 
-			<<" --ttl="<< ttl <<" --diffusivity="<< diff <<" --rate="<< rate <<" --windangle="<< windagl 
-			<<" --windvelocity="<< windvel <<" --sensorradius="<< a <<" --resolution="<< resolution << (fast ? " --fast" : "") << (draw ? "" : " --nodraw") <<endl;
-
+	if (profiling) {
+		for (int i = 1; i < cnt; i ++) {
+			looptime[0] += looptime[i];
+			updatetime[0] += updatetime[i];
+			optimtime[0] += optimtime[i];
+			drawtime[0] += drawtime[i];
+		}
+		printf("Mean time : \n\tloop = % 5.5fms\n\tupdate = % 5.5fms\n\topmital find = % 5.5fms\n\tdrawtime = %-10sms\n", MSECONDS(looptime[0]/cnt), MSECONDS(updatetime[0]/cnt), MSECONDS(optimtime[0]/cnt), (draw ? to_string(MSECONDS(drawtime[0]/cnt)) : "N/A").c_str());
+	}
 }
 
 void writeProbas(string filename, struct simul &simul, const int ratio, const int *x0, const int *y0) {
 	const int imgw = simul.grid->getWidth() * ratio, imgh = simul.grid->getHeight() * ratio;
 	image<rgb_pixel> image((size_t) imgw, (size_t) imgh);
 
-	cout << filename << " ";
 
 	if (x0 == NULL || y0 == NULL)
 		simul.grid->writeProbabilityField(image, ratio);
