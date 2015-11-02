@@ -9,6 +9,7 @@
 #include "infotaxis.hpp"
 
 using namespace std;
+using namespace png;
 
 namespace infotaxis {
 
@@ -23,9 +24,13 @@ namespace infotaxis {
 		this->windang_ = windang;
 		this->part_lifetime_ = part_lifetime;
 		this->sensor_radius_ = sensor_radius;
-		this->resolution_ = resolution; // Grid resolution : squares per meter
+		this->resolution_ = resolution; // Grid resolution : cells per meter
 		this->trueInfotaxis_ = trueInfotaxis;
 		this->entropyCache = -1;
+		this->DEFAULTDIRS_.push_back({ 1, 0});
+		this->DEFAULTDIRS_.push_back({ 0, 1});
+		this->DEFAULTDIRS_.push_back({-1, 0});
+		this->DEFAULTDIRS_.push_back({ 0,-1});
 
 		this->alpha_ = rate/(2*M_PI*diff);
 		this->lambda_ = sqrt(diff*part_lifetime / (1 + windvel*windvel*part_lifetime/(4*diff)));
@@ -36,6 +41,10 @@ namespace infotaxis {
 		for (int i = 0; i < height*width; i ++) {
 			grid_[i] = val;
 		}
+	}
+
+	const std::vector<Direction> InfotaxisGrid::getDefaultDirs() const {
+		return this->DEFAULTDIRS_;
 	}
 
 	InfotaxisGrid::InfotaxisGrid(const InfotaxisGrid &grid)
@@ -57,7 +66,7 @@ namespace infotaxis {
 	}
 
 	InfotaxisGrid::~InfotaxisGrid() {
-		delete grid_;
+		delete[] grid_;
 	}
 
 	double *InfotaxisGrid::operator[](int y)
@@ -65,20 +74,20 @@ namespace infotaxis {
 		return grid_+(width_ * y);
 	}
 
-	double InfotaxisGrid::concentration(int x, int y, int x0, int y0)
+	double InfotaxisGrid::concentration(double x, double y, double x0, double y0)
 	{
 		double dist = max(0.001, hypot(x-x0, y-y0)) / resolution_;
 		double val = rate_/(4*M_PI*diff_*dist) * exp((sin(windang_)*(y-y0) + cos(windang_)*(x-x0))/resolution_*windvel_/(2*diff_) - dist/lambda_);
 		return val;
 	}
 
-	double InfotaxisGrid::encounterRate(int x, int y, int x0, int y0)
+	double InfotaxisGrid::encounterRate(double x, double y, double x0, double y0)
 	{
 		double c = concentration(x, y, x0, y0);
 		return 2*M_PI*diff_*c / log(lambda_/sensor_radius_);
 	}
 
-	double InfotaxisGrid::expectedEncounterRate(int x, int y)
+	double InfotaxisGrid::expectedEncounterRate(double x, double y)
 	{
 		double sum = 0;
 		for (int i = 0; i < width_*height_; i ++) {
@@ -91,17 +100,26 @@ namespace infotaxis {
 		return sum;
 	}
 
-	void InfotaxisGrid::updateProbas(int x, int y, int n, double dt)
+	void InfotaxisGrid::updateProbas(double x, double y, int n, double dt)
 	{
+		if (!isfinite(x) || !isfinite(y) || !isfinite(dt) || n<0) {
+			printf("updateProbas(x=%f, y=%f, n=%d, dt=%f)\n", x, y, n, dt);
+			cerr << "Error : invalid parameters" << endl;
+			throw "Invalid parameters";
+		}
 		double sum = 0;
 		entropyCache = -1; // Invalidate cache
+		for (int j = 0; j < height_; j ++)
+			for (int i = 0; i < width_; i ++)
+				sum += grid_[i + width_*j] *= pow(encounterRate(x, y, i, j)*dt, n) * exp(- encounterRate(x, y, i, j)*dt);
+
+
+		sum = 1/sum;
+
 		for (int j = 0; j < height_; j ++) for (int i = 0; i < width_; i ++)
-			sum += grid_[i + width_*j] *= pow(encounterRate(x, y, i, j)*dt, n) * exp(- encounterRate(x, y, i, j)*dt);
+			grid_[i + width_*j] *= sum;
 
-
-		for (int j = 0; j < height_; j ++) for (int i = 0; i < width_; i ++)
-			grid_[i + width_*j] /= sum;
-
+		backtrace_.push_back({x, y, n});
 	}
 
 	double InfotaxisGrid::entropy()
@@ -121,11 +139,11 @@ namespace infotaxis {
 		return (k == 0) ? exp(-mean) : poisson(mean, k-1) * mean / k;
 	}
 
-	double InfotaxisGrid::deltaEntropy(const int i, const int j, const double dt)
+	double InfotaxisGrid::deltaEntropy(const double i, const double j, const double dt)
 	{
 		InfotaxisGrid *grid = this;
-		double prob = grid->grid_[grid->width_ * j + i], delta = 0, cumul = 0, p, ear = grid->expectedEncounterRate(i, j),
-					mean = ear * dt, entropy = grid->entropy();
+		double prob = grid->grid_[grid->width_ * (int)j + (int)i], delta = 0, cumul = 0, p,
+				ear = grid->expectedEncounterRate(i, j), mean = ear * dt, entropy = grid->entropy();
 		InfotaxisGrid newGrid = InfotaxisGrid(*grid);
 		for (int k = max((int)mean - 10, 0); cumul < 0.9999 && k < mean + 10; k ++) {
 			cumul += p = InfotaxisGrid::poisson(mean, k);
@@ -135,7 +153,7 @@ namespace infotaxis {
 				cerr << "Non-finite poisson : "<< i <<":"<< j <<" : "<< p <<"("<< mean <<", "<< k <<")" << endl;
 				assert(false);
 			}
-			double e = newGrid.entropy(); 
+			double e = newGrid.entropy();
 			if (!isfinite(e)) {
 				cerr << "Non-finite entropy : "<< i <<":"<< j <<" : "<< e << endl;
 				assert(false);
@@ -146,20 +164,20 @@ namespace infotaxis {
 		return delta;
 	}
 
-	Direction InfotaxisGrid::getOptimalMove(const int x, const int y, const double dt)
+	Direction InfotaxisGrid::getOptimalMove(const double x, const double y, const double dt, const vector<Direction> &directions)
 	{
 		double best = -1;
-		Direction bestDir = STAY;
+		Direction bestDir = directions[0];
 		vector<pair<Direction, future<double>>> promises;
-		for (int d = STAY; d <= SOUTH; d ++) {
-			int i = x, j = y;
-			go_to((Direction)d, i, j);
+		for (Direction d : directions) {
+			double i = x, j = y;
+			d.go_to(i, j);
 			if (i >= 0 && i < width_ && j >= 0 && j < height_) {
 				if (trueInfotaxis_)
-					promises.push_back(pair<Direction, future<double>>((Direction)d, 
+					promises.push_back(pair<Direction, future<double>>(d,
 						async(launch::async, &InfotaxisGrid::deltaEntropy, this,  i, j, dt)));
 				else
-					promises.push_back(pair<Direction, future<double>>((Direction)d, 
+					promises.push_back(pair<Direction, future<double>>(d,
 						async(launch::async, &InfotaxisGrid::expectedEncounterRate, this,  i, j)));
 			}
 		}
@@ -178,17 +196,12 @@ namespace infotaxis {
 		return bestDir;
 	}
 
-	void go_to(Direction d, int &x, int &y)
-	{
-		int dx, dy;
-		if (d == STAY) {
-	 		dx = dy = 0;
-		} else {
-			dx = (1-d%2)*(1-2*(d/2)),
-			dy = (d%2)*(1-2*(d/2));
-		}
-		x += dx;
-		y += dy;
+	double InfotaxisGrid::getMoveValue(double x, double y, double dt, const Direction &direction) {
+		direction.go_to(x, y);
+		if (x >= 0 && y >= 0 && x < width_ && y < height_)
+			return deltaEntropy(x, y, dt);
+		else
+			return 0;
 	}
 
 #ifdef PNGPP_PNG_HPP_INCLUDED
@@ -203,7 +216,7 @@ namespace infotaxis {
 		return rgb_pixel(r, g, b);
 	}
 
-	void drawArray(image<rgb_pixel> &image, const double *array, const int w, const int h, const int ratio, const bool absolute = true)
+	void InfotaxisGrid::drawArray(image<rgb_pixel> &image, const double *array, const int w, const int h, const int ratio, const bool absolute = true)
 	{
 		const int imgw = w * ratio, imgh = h * ratio;
 		double mi = INFINITY, ma = -INFINITY;
@@ -231,20 +244,44 @@ namespace infotaxis {
 						absolute ? values[i/ratio*w + j/ratio] : 0,
 						(values[i/ratio*w + j/ratio]-mi)/scale);
 			}
+		delete[] values;
+
+		if (backtrace_.size() > 0) {
+			for (Trace &t : backtrace_) {
+				rgb_pixel color = (t.detections == 0) ? rgb_pixel(64, 128, 128) : rgb_pixel(
+						(byte) (255 - (128 / t.detections)), 64, 64);
+				for (int j = 1; j < max(ratio - 1, 2); j++)
+					for (int i = 1; i < max(ratio - 1, 2); i++) {
+						image[imgh - 1 - ((int)(t.y) * ratio + (int)j)][t.x * ratio + i] = color;
+					}
+			}
+			Trace last = backtrace_.back();
+			int x = (int)(last.x + .5) * ratio;
+			int y = (int)(last.y + .5) * ratio;
+			for (int i = 0; i <= 10; i++) {
+				if (imgh - y + 4 - i >= 0 && imgh - y + 4 - i < imgh) {
+					if (x - 5 + i >= 0 && x - 5 + i < imgw)
+						image[imgh - y + 4 - i][x - 5 + i] = rgb_pixel(255, 128, 0);
+
+					if (x + 5 - i >= 0 && x + 5 - i < imgw)
+						image[imgh - y + 4 - i][x + 5 - i] = rgb_pixel(255, 128, 0);
+				}
+			}
+		}
 	}
 
 	void InfotaxisGrid::writeProbabilityField(png::image<png::rgb_pixel> &image, const int ratio)
 	{
-		drawArray(image, grid_, width_, height_, ratio);
+		this->drawArray(image, grid_, width_, height_, ratio);
 	}
-	void InfotaxisGrid::writeMeanStationaryField(png::image<png::rgb_pixel> &image, const int x0, const int y0, const int ratio)
+	void InfotaxisGrid::writeMeanStationaryField(png::image<png::rgb_pixel> &image, const double x0, const double y0, const int ratio)
 	{
 		double *array = new double[width_*height_];
 		for (int y = 0; y < height_; y ++)
 			for (int x = 0; x < width_; x ++)
 				array[y * width_ + x] = log(concentration(x, y, x0, y0));
 
-		drawArray(image, array, width_, height_, ratio, false);
+		this->drawArray(image, array, width_, height_, ratio, false);
 	}
 
 #endif

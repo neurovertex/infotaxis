@@ -3,8 +3,7 @@ import json
 import os
 import subprocess
 from sys import argv
-
-print(len(argv), argv)
+from math import sqrt
 
 if argv[1] == 'test':
 	prog = "./bin/main"
@@ -41,17 +40,41 @@ if argv[1] == 'test':
 elif argv[1] == 'process':
 	infile = argv[2] if len(argv) > 2 else "batch/result.json"
 	outfile = argv[3] if len(argv) > 3 else "batch/data.txt"
+	dotfile = argv[4] if len(argv) > 4 else None
+	histfile = argv[5] if len(argv) > 5 else None
 
 	f=open(infile, mode='r')
 	obj = json.load(f)
 	f.close()
+	
+	dot = open(dotfile, mode='w') if dotfile != None else None
+	hist = open(histfile, mode='w') if histfile != None else None
+	
+	histo = {}
 
 	f=open(outfile, mode='w')
+	f.write("dist average median deviation success rate\n")
 	for dist in sorted(obj):
-		filtered=[i for i in obj[dist] if i <= 2048]
+		filtered=sorted([i for i in obj[dist] if i <= 2048])
 		success=len(filtered) * 100. / len(obj[dist])
-		f.write("%d %d %f\n" % (int(dist), sum(filtered)/len(filtered), success))
+		avg=sum(filtered)/len(filtered)
+		stddev=sqrt(sum([(i-avg)**2 for i in filtered])/len(filtered))
+		f.write("%d %d %d %f %f\n" % (int(dist), avg, filtered[int(len(filtered)/2)], stddev, success))
+		for i in filtered:
+			v = int(i * 10 / int(dist))
+			histo[v] = histo[v] + 1 if v in histo.keys() else 1
+			if dot != None:
+				dot.write("%s %d\n" % (dist, i))
+	
+	if hist != None:
+		for i in range(0, max(histo.keys())+1):
+			hist.write("%d %d\n" % (i, histo[i] if i in histo.keys() else 0))
+	
 	f.close()
+	if dot != None:
+		dot.close()
+	if hist != None:
+		hist.close()
 	
 	print("Success. Wrote to "+ outfile)
 else:

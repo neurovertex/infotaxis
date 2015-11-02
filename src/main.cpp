@@ -19,12 +19,8 @@ using namespace png;
 using namespace infotaxis;
 namespace po = boost::program_options;
 
-typedef struct simultrace {
-	int x, y, detections;
-} Trace;
-
 struct simul {
-	int curx, cury;
+	double curx, cury;
 	InfotaxisGrid *grid;
 	list<Trace> backtrace;
 };
@@ -34,8 +30,8 @@ void writeProbas(string filename, struct simul &simul, const int ratio, const in
 void simulate(struct simul &simul, int x0, int y0, double dt, bool profiling, bool draw, ofstream *logfile, bool quiet);
 
 int main(int argc, char **argv) {
-	int w = -1, h = -1, x0, y0, startx, starty, ttl = 400;
-	double diff = 1, rate = 1, windagl = -M_PI / 2, windvel = 1, a = 1, dt = 1, resolution = 20.;
+	int w = -1, h = -1, x0, y0, ttl = 400;
+	double diff = 1, rate = 1, windagl = -M_PI / 2, windvel = 1, a = 1, dt = 1, resolution = 20., startx, starty;
 	ofstream *logfile = NULL;
 	string meanfield;
 	bool nosimulate = false, fast = false, draw = true, profiling = false, quiet;
@@ -183,7 +179,7 @@ void simulate(struct simul &simul, int x0, int y0, double dt, bool profiling, bo
 		gen(); // Creating a variate_generator with gen seeds it from gen's value without modifying gen.
 		//Thus we need to iterate gen to avoid reseeding the generator with the same value every iteration
 		int detects = pdist(gen);
-		
+
 		if (!quiet)
 			cout << ", detections : " << detects << ", entropy : " << entropy << endl;
 
@@ -195,7 +191,7 @@ void simulate(struct simul &simul, int x0, int y0, double dt, bool profiling, bo
 		PROFILE(updatetime[cnt] += clock();)
 
 		PROFILE(optimtime[cnt] = (long) -clock();)
-		Direction optimal = grid.getOptimalMove(simul.curx, simul.cury, dt);
+		Direction optimal = grid.getOptimalMove(simul.curx, simul.cury, dt, grid.getDefaultDirs());
 		PROFILE(optimtime[cnt] += clock();)
 
 		sprintf(filename, "pictures/iteration%04d.png", cnt);
@@ -205,7 +201,7 @@ void simulate(struct simul &simul, int x0, int y0, double dt, bool profiling, bo
 			PROFILE(drawtime[cnt] += clock();)
 		}
 		simul.backtrace.push_front({simul.curx, simul.cury, detects});
-		go_to(optimal, simul.curx, simul.cury);
+		optimal.go_to(simul.curx, simul.cury);
 		PROFILE(looptime[cnt] += clock();)
 		PROFILE(printf("Time : loop=%5.5fms, update=%5.5fms, opmital find=%5.5fms, drawtime=%-10sms\n", MSECONDS(looptime[cnt]), MSECONDS(updatetime[cnt]), MSECONDS(optimtime[cnt]), (draw ? to_string(MSECONDS(drawtime[cnt])) : "N/A").c_str());)
 	} while (cnt++ < MAX_ITERATIONS && (simul.curx != x0 || simul.cury != y0));
@@ -244,26 +240,5 @@ void writeProbas(string filename, struct simul &simul, const int ratio, const in
 	else
 		simul.grid->writeMeanStationaryField(image, *x0, *y0, ratio);
 
-	if (simul.backtrace.size() > 0) {
-		for (Trace t : simul.backtrace) {
-			rgb_pixel color = (t.detections == 0) ? rgb_pixel(64, 128, 128) : rgb_pixel(
-					(byte) (255 - (128 / t.detections)), 64, 64);
-			for (int j = 1; j < max(ratio - 1, 2); j++)
-				for (int i = 1; i < max(ratio - 1, 2); i++) {
-					image[imgh - 1 - (t.y * ratio + j)][t.x * ratio + i] = color;
-				}
-		}
-		int x = simul.curx * ratio + ratio / 2;
-		int y = simul.cury * ratio + ratio / 2;
-		for (int i = 0; i <= 10; i++) {
-			if (imgh - y + 4 - i >= 0 && imgh - y + 4 - i < imgh) {
-				if (x - 5 + i >= 0 && x - 5 + i < imgw)
-					image[imgh - y + 4 - i][x - 5 + i] = rgb_pixel(255, 128, 0);
-
-				if (x + 5 - i >= 0 && x + 5 - i < imgw)
-					image[imgh - y + 4 - i][x + 5 - i] = rgb_pixel(255, 128, 0);
-			}
-		}
-	}
 	image.write(filename);
 }

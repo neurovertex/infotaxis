@@ -2,23 +2,25 @@
 #define INFOTAXIS_HPP_INCLUDED
 
 #include <future>
+#include <list>
 #ifndef INFOTAXIS_NOPNG
 #include <png++/png.hpp>
 #endif
 
 namespace infotaxis {
 
-	static const char * const DIRECTIONS[] = {"STAY", "EAST", "NORTH", "WEST", "SOUTH"};
-
-	typedef enum direction {
-		STAY=-1,
-		EAST=0,
-		NORTH=1,
-		WEST=2,
-		SOUTH=3
+	typedef struct direction {
+		double dx, dy;
+		void go_to(double &x, double &y) const {
+			x += this->dx;
+			y += this->dy;
+		}
 	} Direction;
 
-	void go_to(Direction d, int &x, int &y);
+	typedef struct simultrace {
+		double x, y;
+		int detections;
+	} Trace;
 
 	class InfotaxisGrid
 	{
@@ -27,28 +29,34 @@ namespace infotaxis {
 		InfotaxisGrid(const InfotaxisGrid &grid); // Clone constructor
 		~InfotaxisGrid();
 		double *operator[](int x);
-		double concentration(int x, int y, int x0, int y0);
-		double encounterRate(int x, int y, int x0, int y0);
-		double expectedEncounterRate(int x, int y);
+		double concentration(double x, double y, double x0, double y0);
+		double encounterRate(double x, double y, double x0, double y0);
+		double expectedEncounterRate(double x, double y);
 		double entropy();
-		void updateProbas(int x, int y, int n, double t);
-		Direction getOptimalMove(int x, int y, double dt);
-		int getWidth() { return width_; };
-		int getHeight() { return height_; };
+		void updateProbas(double x, double y, int n, double t);
+		Direction getOptimalMove(double x, double y, double dt, const std::vector<Direction> &directions);
+		double getMoveValue(double x, double y, double dt, const Direction &direction);
+		double deltaEntropy(double i, double j, double dt);
+		int getWidth() const { return width_; };
+		int getHeight() const { return height_; };
+		int getResolution() const {return resolution_; };
 #ifdef PNGPP_PNG_HPP_INCLUDED
 		void writeProbabilityField(png::image<png::rgb_pixel> &image, int ratio);
-		void writeMeanStationaryField(png::image<png::rgb_pixel> &image, int x0, int y0, int ratio);
+		void writeMeanStationaryField(png::image<png::rgb_pixel> &image, double x0, double y0, int ratio);
 #endif
 		static double poisson(double mean, int k);
+		const std::vector<Direction> getDefaultDirs() const;
 	private:
 		double *grid_,
-				diff_, rate_, windvel_, windang_, 
-				part_lifetime_, alpha_, lambda_, 
+				diff_, rate_, windvel_, windang_,
+				part_lifetime_, alpha_, lambda_,
 				sensor_radius_, resolution_,
 				entropyCache;
 		int width_, height_;
 		bool trueInfotaxis_;
-		double deltaEntropy(const int i, const int j, const double dt);
+		std::vector<Trace> backtrace_;
+		std::vector<Direction> DEFAULTDIRS_;
+		void drawArray(png::image<png::rgb_pixel> &image, const double *array, const int w, const int h, const int ratio, const bool absolute);
 	};
 }
 
