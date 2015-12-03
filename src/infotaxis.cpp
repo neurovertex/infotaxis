@@ -35,7 +35,10 @@ namespace infotaxis {
 		this->alpha_ = rate/(2*M_PI*diff);
 		this->lambda_ = sqrt(diff*part_lifetime / (1 + windvel*windvel*part_lifetime/(4*diff)));
 
-		assert(lambda_ > sensor_radius_); // Encounter rate equation won't work if ln(lambda_/sensor_radius_) <= 0
+		if (lambda_ <= sensor_radius_) { // Encounter rate equation won't work if ln(lambda_/sensor_radius_) <= 0
+			cerr <<"Error : Assertion lambda ("<< lambda_ <<") > sensor_radius ("<< sensor_radius_ <<") failed."<< endl;
+			throw runtime_error("Invalid parameters");
+		}
 
 		double val = 1.0/(height*width);
 		for (int i = 0; i < height*width; i ++) {
@@ -47,22 +50,16 @@ namespace infotaxis {
 		return this->DEFAULTDIRS_;
 	}
 
-	InfotaxisGrid::InfotaxisGrid(const InfotaxisGrid &grid)
+	InfotaxisGrid::InfotaxisGrid(const InfotaxisGrid &grid) :
+		InfotaxisGrid(grid, grid.width_, grid.height_)
 	{
-		this->width_ = grid.width_;
-		this->height_ = grid.height_;
-		this->grid_ = new double[height_*width_];
-		this->diff_ = grid.diff_;
-		this->rate_ = grid.rate_;
-		this->windvel_ = grid.windvel_;
-		this->windang_ = grid.windang_;
-		this->part_lifetime_ = grid.part_lifetime_;
-		this->sensor_radius_ = grid.sensor_radius_;
-		this->resolution_ = grid.resolution_;
-		this->alpha_ = grid.alpha_;
-		this->lambda_ = grid.lambda_;
-
 		memcpy(this->grid_, grid.grid_, sizeof(double) * width_ * height_);
+	}
+
+	InfotaxisGrid::InfotaxisGrid(const InfotaxisGrid &grid, int width, int height) :
+		InfotaxisGrid(width, height, grid.diff_, grid.rate_, grid.windvel_, grid.windang_,
+			grid.part_lifetime_, grid.sensor_radius_, grid.resolution_, grid.trueInfotaxis_)
+	{
 	}
 
 	InfotaxisGrid::~InfotaxisGrid() {
@@ -103,28 +100,31 @@ namespace infotaxis {
 	void InfotaxisGrid::updateProbas(double x, double y, int n, double dt)
 	{
 		if (!isfinite(x) || !isfinite(y) || !isfinite(dt) || n<0) {
-			printf("updateProbas(x=%f, y=%f, n=%d, dt=%f)\n", x, y, n, dt);
-			cerr << "Error : invalid parameters" << endl;
-			throw "Invalid parameters";
+			throw runtime_error("Invalid parameters in updateProbas");
 		}
 		double sum = 0;
 		entropyCache = -1; // Invalidate cache
 		for (int j = 0; j < height_; j ++)
-			for (int i = 0; i < width_; i ++)
-				sum += grid_[i + width_*j] *= pow(encounterRate(x, y, i, j)*dt, n) * exp(- encounterRate(x, y, i, j)*dt);
-
+			for (int i = 0; i < width_; i ++) {
+				double encounter = encounterRate(x, y, i, j)*dt;
+				grid_[i + width_*j] *= exp(min(n * log(encounter) - encounter, 700.)); // max double value ~= e^708
+				if (!isfinite(grid_[i + width_*j])) {
+					throw runtime_error("Error : Null or non-finite sum on grid update");
+				}
+				sum += grid_[i + width_*j];
+			}
 
 		sum = 1/sum;
 
 		for (int j = 0; j < height_; j ++) for (int i = 0; i < width_; i ++)
 			grid_[i + width_*j] *= sum;
 
-		backtrace_.push_back({x, y, n});
+		backtrace_.push_back({x, y, n, dt});
 	}
 
 	double InfotaxisGrid::entropy()
 	{
-		if (entropyCache < 0) {
+		if (entropyCache <= 0) {
 			double sum = 0;
 
 			for (int i = 0; i < height_*width_; i ++)
@@ -144,7 +144,7 @@ namespace infotaxis {
 		InfotaxisGrid *grid = this;
 		double prob = grid->grid_[grid->width_ * (int)j + (int)i], delta = 0, cumul = 0, p,
 				ear = grid->expectedEncounterRate(i, j), mean = ear * dt, entropy = grid->entropy();
-		InfotaxisGrid newGrid = InfotaxisGrid(*grid);
+		InfotaxisGrid newGrid(*grid);
 		for (int k = max((int)mean - 10, 0); cumul < 0.9999 && k < mean + 10; k ++) {
 			cumul += p = InfotaxisGrid::poisson(mean, k);
 			memcpy(newGrid.grid_, grid->grid_, sizeof(double) * grid->height_ * grid->width_);
@@ -154,13 +154,13 @@ namespace infotaxis {
 				assert(false);
 			}
 			double e = newGrid.entropy();
-			if (!isfinite(e)) {
+			if (!isfinite(e) || e == 0) {
 				cerr << "Non-finite entropy : "<< i <<":"<< j <<" : "<< e << endl;
 				assert(false);
 			}
 			delta += p * (e - entropy);
 		}
-		delta =  prob * entropy - (1-prob)* delta;
+		delta = prob * entropy - (1-prob)* delta;
 		return delta;
 	}
 
@@ -175,7 +175,7 @@ namespace infotaxis {
 			if (i >= 0 && i < width_ && j >= 0 && j < height_) {
 				if (trueInfotaxis_)
 					promises.push_back(pair<Direction, future<double>>(d,
-						async(launch::async, &InfotaxisGrid::deltaEntropy, this,  i, j, dt)));
+						async(launch::deferred, &InfotaxisGrid::deltaEntropy, this,  i, j, dt)));
 				else
 					promises.push_back(pair<Direction, future<double>>(d,
 						async(launch::async, &InfotaxisGrid::expectedEncounterRate, this,  i, j)));
@@ -202,6 +202,114 @@ namespace infotaxis {
 			return deltaEntropy(x, y, dt);
 		else
 			return 0;
+	}
+
+	InfotaxisGrid *InfotaxisGrid::resize(int width, int height, int xoff, int yoff, ResizeMethod method, int rescale_dim) {
+		if (width_ + xoff > width || height_ + yoff > height)
+			throw runtime_error("Invalid argument in resize()");
+
+		if (method == ResizeMethod::RESCALE && width < rescale_dim && height < rescale_dim)
+				return resize(width, height, xoff, yoff, ResizeMethod::FULL_RECALCULATE);
+
+		std::vector<Trace> newBacktrace;
+		InfotaxisGrid *newGrid = new InfotaxisGrid(*this, width, height);
+		for (Trace &t : backtrace_) {
+			newBacktrace.push_back({t.x + xoff, t.y + yoff, t.detections, t.dt});
+		}
+		switch(method) {
+		case ResizeMethod::FULL_RECALCULATE: {
+			for (Trace &t : newBacktrace) {
+				newGrid->updateProbas(t.x, t.y, t.detections, t.dt);
+			}
+		}
+		break;
+		case ResizeMethod::RESCALE: {
+			double rescaleRatio = rescale_dim / (double)max(width, height), newsum = 0, oldsum = 0;
+			int newWidth = floor(rescaleRatio * width), newHeight = floor(rescaleRatio * height);
+			InfotaxisGrid rescaled(newWidth, newHeight, diff_, rate_, windvel_, windang_,
+							part_lifetime_, sensor_radius_, resolution_ * rescaleRatio, trueInfotaxis_);
+			for (Trace &t : newBacktrace) {
+				rescaled.updateProbas(t.x*rescaleRatio, t.y*rescaleRatio, t.detections, t.dt);
+					newGrid->backtrace_.push_back(t);
+			}
+			double newScale = (newWidth*newHeight)/(double)(width*height), oldScale;
+
+			for (int j = 0; j < width; j ++)
+				for (int i = 0; i < height; i ++) {
+					int lowx = (int)floor(i*rescaleRatio), hix = min((int)ceil(i*rescaleRatio), newWidth-1),
+						lowy = (int)floor(j*rescaleRatio), hiy = min((int)ceil(j*rescaleRatio), newHeight-1);
+					double xo = i*rescaleRatio-lowx, yo = j*rescaleRatio-lowy;
+					newGrid->grid_[j * width + i] = ((rescaled[lowy][lowx] * (1-xo) + rescaled[lowy][hix] * xo) * (1-yo)
+						+ (rescaled[hiy][lowx] * (1-xo) + rescaled[hiy][hix] * xo) * yo) * newScale; // Bilinear interpolation
+					//newGrid->grid_[j*width + i] = rescaled[lowy][lowx] * newScale; // No interpolation
+					if (i >= xoff && i < xoff+width_ && j >= yoff && j < yoff + height_) {
+						oldsum += newGrid->grid_[j * width + i];
+					} else {
+						newsum += newGrid->grid_[j * width + i];
+					}
+				}
+
+			oldScale = oldsum;
+			oldsum = 0;
+			for (int j = 0; j < height_; j ++)
+				for (int i = 0; i < width_; i ++) {
+					oldsum += newGrid->grid_[(j+yoff) * width + (i+xoff)] = grid_[j*width_ + i] * oldScale;
+				}
+
+			double sum = 1./(oldsum + newsum);
+			for (int j = 0; j < width; j ++)
+				for (int i = 0; i < height; i ++)
+					newGrid->grid_[j * width + i] *= sum;
+		}
+		break;
+		case ResizeMethod::MIXED: {
+			for (Trace &t : newBacktrace) {
+				if (t.detections > 0)
+					newGrid->updateProbas(t.x, t.y, t.detections, t.dt);
+			}
+			double sum = 0;
+			for (int j = 0; j < height; j ++)
+				for (int i = 0; i < width; i++) {
+					if (i >= xoff && i < xoff+width_ && j >= yoff && j < yoff + height_)
+						newGrid->grid_[j * width + i] = grid_[(j-yoff) * width_ + (i-xoff)];
+					sum += newGrid->grid_[j * width + i];
+				}
+
+			sum = 1/sum;
+			for (int j = 0; j < height; j ++)
+				for (int i = 0; i < width; i++)
+					 newGrid->grid_[j * width + i] *= sum;
+		}
+		break;
+		case ResizeMethod::FLAT_NEW: {
+			double newarea = width * height, oldarea = width_ * height_,
+				flatVal = (newarea - oldarea) / (newarea * (newarea-oldarea)), sum = 0,
+				ratio = oldarea / (double) newarea;
+			for (int j = 0; j < height; j ++)
+				for (int i = 0; i < width; i++) {
+					sum += newGrid->grid_[j * width + i] = (i >= xoff && i < xoff+width_ && j >= yoff && j < yoff + height_) ? grid_[(j-yoff) * width_ + (i-xoff)] * ratio : flatVal;
+				}
+			if (abs(sum-1.) > 0.1)
+				throw runtime_error("Error : significant variance from normalization after resize");
+		}
+		break;
+		}
+		return newGrid;
+	}
+
+	void InfotaxisGrid::toCSV(ofstream& file, string separator) {
+		for (int y = 0; y < height_; y ++) {
+			file << grid_[y * width_];
+			for (int x = 1; x < width_; x ++)
+				file << separator << grid_[y * width_ + x];
+			file << endl;
+		}
+	}
+
+	void InfotaxisGrid::toCSV(string filename, string separator) {
+		auto file = ofstream(filename, ios_base::out);
+		toCSV(file, separator);
+		file.close();
 	}
 
 #ifdef PNGPP_PNG_HPP_INCLUDED

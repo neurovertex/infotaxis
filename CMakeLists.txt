@@ -4,6 +4,7 @@ project(Infotaxis C CXX)
 find_package(Boost REQUIRED program_options)
 find_package(PNG)
 find_package (Threads REQUIRED)
+Include(CheckIncludeFiles)
 check_include_files ("time.h" HAS_TIME_H)
 
 include_directories(${Boost_INCLUDE_DIRS})
@@ -38,5 +39,3 @@ if (NOT INFOTAXIS_NOPNG)
 	add_executable (main "src/main.cpp")
 	target_link_libraries(main infotaxis ${PNG_LIBRARIES} ${Boost_LIBRARIES} ${CMAKE_THREAD_LIBS_INIT})
 endif (NOT INFOTAXIS_NOPNG)
-
-

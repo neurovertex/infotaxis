@@ -20,7 +20,12 @@ namespace infotaxis {
 	typedef struct simultrace {
 		double x, y;
 		int detections;
+		double dt;
 	} Trace;
+
+	enum class ResizeMethod {
+		FULL_RECALCULATE, MIXED, RESCALE, FLAT_NEW
+	};
 
 	class InfotaxisGrid
 	{
@@ -40,6 +45,9 @@ namespace infotaxis {
 		int getWidth() const { return width_; };
 		int getHeight() const { return height_; };
 		int getResolution() const {return resolution_; };
+		InfotaxisGrid *resize(int width, int height, int xoff, int yoff, ResizeMethod method = ResizeMethod::MIXED, int rescale_dim = 32);
+		void toCSV(std::ofstream& file, std::string separator = ",");
+		void toCSV(std::string filename, std::string separator = ",");
 #ifdef PNGPP_PNG_HPP_INCLUDED
 		void writeProbabilityField(png::image<png::rgb_pixel> &image, int ratio);
 		void writeMeanStationaryField(png::image<png::rgb_pixel> &image, double x0, double y0, int ratio);
@@ -47,6 +55,7 @@ namespace infotaxis {
 		static double poisson(double mean, int k);
 		const std::vector<Direction> getDefaultDirs() const;
 	private:
+		InfotaxisGrid(const InfotaxisGrid &grid, int width, int height);
 		double *grid_,
 				diff_, rate_, windvel_, windang_,
 				part_lifetime_, alpha_, lambda_,

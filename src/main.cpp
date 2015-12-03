@@ -1,4 +1,5 @@
 #include "infotaxis.hpp"
+#include <stdexcept>
 #include <algorithm>
 #include <list>
 #include <boost/program_options.hpp>
@@ -9,7 +10,7 @@
 #else
 #include <time.h>
 #define PROFILE(cmd) if (profiling) cmd;
-#define MSECONDS(time) ((time * timeratio * 1000.))
+#define MSECONDS(time) (((time) * timeratio * 1000.))
 #endif
 
 #define MAX_ITERATIONS 2048
@@ -25,13 +26,15 @@ struct simul {
 	list<Trace> backtrace;
 };
 
-void writeProbas(string filename, struct simul &simul, const int ratio, const int *x0 = NULL, const int *y0 = NULL);
+void writeProbas(string filename, InfotaxisGrid &grid, const int ratio, const int *x0 = nullptr, const int *y0 = nullptr);
 
 void simulate(struct simul &simul, int x0, int y0, double dt, bool profiling, bool draw, ofstream *logfile, bool quiet);
 
+static const int RATIO = 2;
+
 int main(int argc, char **argv) {
-	int w = -1, h = -1, x0, y0, ttl = 400;
-	double diff = 1, rate = 1, windagl = -M_PI / 2, windvel = 1, a = 1, dt = 1, resolution = 20., startx, starty;
+	int w = -1, h = -1, x0, y0, ttl = 2500;
+	double diff = 1, rate = 1, windagl = -M_PI / 2, windvel = 1, a = .1, dt = 1, resolution = 20., startx, starty;
 	ofstream *logfile = NULL;
 	string meanfield;
 	bool nosimulate = false, fast = false, draw = true, profiling = false, quiet;
@@ -133,11 +136,16 @@ int main(int argc, char **argv) {
 	struct simul simul = {startx, starty, &grid};
 
 	if (logfile != NULL)
-		*logfile << resolution << '\n' << endl;
+		*logfile << w <<" "<< h <<" "<< diff <<" "<< rate <<" "<< windvel <<" "<< windagl <<" "<< ttl
+			<<" "<< a <<" "<< resolution <<" "<< fast << dt << endl << endl;
 
-	if (!nosimulate) {
-		simulate(simul, x0, y0, dt, profiling, draw, logfile, quiet);
-	}
+	if (!nosimulate)
+		try {
+			simulate(simul, x0, y0, dt, profiling, draw, logfile, quiet);
+		} catch (const exception &e) {
+			cerr << "Exception : "<< e.what() << endl;
+			return 1;
+		}
 
 	if (logfile != NULL) {
 		*logfile << flush;
@@ -145,9 +153,9 @@ int main(int argc, char **argv) {
 	}
 
 	if (draw && !nosimulate && meanfield == "")
-		writeProbas("pictures/meanfield.png", simul, 5, &x0, &y0);
+		writeProbas("pictures/meanfield.png", *simul.grid, RATIO, &x0, &y0);
 	else if (meanfield != "")
-		writeProbas(meanfield, simul, 5, &x0, &y0);
+		writeProbas(meanfield, *simul.grid, RATIO, &x0, &y0);
 
 }
 
@@ -170,18 +178,18 @@ void simulate(struct simul &simul, int x0, int y0, double dt, bool profiling, bo
 	}
 #endif
 
+	InfotaxisGrid *resized = nullptr;
 	do {
 		PROFILE(looptime[cnt] = (long) -clock();)
 		double mean = grid.encounterRate(simul.curx, simul.cury, x0, y0) * dt, entropy = grid.entropy();
-		if (!quiet)
-			cout << cnt << " : " << simul.curx << ":" << simul.cury << " => mean " << mean;
 		poisson_distribution<int> pdist(mean);
 		gen(); // Creating a variate_generator with gen seeds it from gen's value without modifying gen.
 		//Thus we need to iterate gen to avoid reseeding the generator with the same value every iteration
 		int detects = pdist(gen);
 
 		if (!quiet)
-			cout << ", detections : " << detects << ", entropy : " << entropy << endl;
+			cout << cnt << " : " << simul.curx << ":" << simul.cury << " => mean " << mean <<
+				", detections : " << detects << ", entropy : " << entropy << endl;
 
 		if (logfile != NULL)
 			*logfile << simul.curx <<" "<< simul.cury <<" "<< entropy <<" "<< detects << endl;
@@ -197,7 +205,7 @@ void simulate(struct simul &simul, int x0, int y0, double dt, bool profiling, bo
 		sprintf(filename, "pictures/iteration%04d.png", cnt);
 		if (draw) {
 			PROFILE(drawtime[cnt] = (long)-clock());
-			writeProbas(filename, simul, 5, NULL);
+			writeProbas(filename, *simul.grid, RATIO);
 			PROFILE(drawtime[cnt] += clock();)
 		}
 		simul.backtrace.push_front({simul.curx, simul.cury, detects});
@@ -207,7 +215,10 @@ void simulate(struct simul &simul, int x0, int y0, double dt, bool profiling, bo
 	} while (cnt++ < MAX_ITERATIONS && (simul.curx != x0 || simul.cury != y0));
 	sprintf(filename, "pictures/iteration%04d.png", cnt);
 	if (draw)
-		writeProbas(filename, simul, 5, NULL, NULL);
+		writeProbas(filename, *simul.grid, RATIO);
+
+	if (resized != nullptr)
+		delete resized;
 
 	if (!quiet) {
 		if (simul.curx == x0 && simul.cury == y0)
@@ -230,15 +241,13 @@ void simulate(struct simul &simul, int x0, int y0, double dt, bool profiling, bo
 	}
 }
 
-void writeProbas(string filename, struct simul &simul, const int ratio, const int *x0, const int *y0) {
-	const int imgw = simul.grid->getWidth() * ratio, imgh = simul.grid->getHeight() * ratio;
+void writeProbas(string filename, InfotaxisGrid &grid, const int ratio, const int *x0, const int *y0) {
+	const int imgw = grid.getWidth() * ratio, imgh = grid.getHeight() * ratio;
 	image<rgb_pixel> image((size_t) imgw, (size_t) imgh);
-
-
 	if (x0 == NULL || y0 == NULL)
-		simul.grid->writeProbabilityField(image, ratio);
+		grid.writeProbabilityField(image, ratio);
 	else
-		simul.grid->writeMeanStationaryField(image, *x0, *y0, ratio);
+		grid.writeMeanStationaryField(image, *x0, *y0, ratio);
 
 	image.write(filename);
 }
