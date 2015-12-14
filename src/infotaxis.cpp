@@ -108,16 +108,16 @@ namespace infotaxis {
 			for (int i = 0; i < width_; i ++) {
 				double encounter = encounterRate(x, y, i, j)*dt;
 				grid_[i + width_*j] *= exp(min(n * log(encounter) - encounter, 700.)); // max double value ~= e^708
-				if (!isfinite(grid_[i + width_*j])) {
-					throw runtime_error("Error : Null or non-finite sum on grid update");
-				}
 				sum += grid_[i + width_*j];
 			}
 
 		sum = 1/sum;
+		if (!isfinite(sum))
+			throw runtime_error("Error : Non-finite value on grid update");
 
 		for (int j = 0; j < height_; j ++) for (int i = 0; i < width_; i ++)
-			grid_[i + width_*j] *= sum;
+			if ((grid_[i + width_*j] *= sum) < 0)
+				throw new runtime_error("Error : value < 0");
 
 		backtrace_.push_back({x, y, n, dt});
 	}
@@ -205,8 +205,11 @@ namespace infotaxis {
 	}
 
 	InfotaxisGrid *InfotaxisGrid::resize(int width, int height, int xoff, int yoff, ResizeMethod method, int rescale_dim) {
-		if (width_ + xoff > width || height_ + yoff > height)
-			throw runtime_error("Invalid argument in resize()");
+		if (width_ + xoff > width || height_ + yoff > height || rescale_dim < 1) {
+			char *err_string = new char[256];
+			sprintf(err_string, "Invalid argument in resize (%d + %d > %d || %d + %d > %d || %d < 1)", width_, xoff, width, height_, yoff, height, rescale_dim);
+			throw runtime_error(err_string);
+		}
 
 		if (method == ResizeMethod::RESCALE && width < rescale_dim && height < rescale_dim)
 				return resize(width, height, xoff, yoff, ResizeMethod::FULL_RECALCULATE);
@@ -224,18 +227,21 @@ namespace infotaxis {
 		}
 		break;
 		case ResizeMethod::RESCALE: {
-			double rescaleRatio = rescale_dim / (double)max(width, height), newsum = 0, oldsum = 0;
-			int newWidth = floor(rescaleRatio * width), newHeight = floor(rescaleRatio * height);
+				// Make the new scale so the largest side is no less than rescale_dim,
+				// and the smaller no less than rescale_dim/2
+			double rescaleRatio = rescale_dim / (double)min(max(width, height), 2*min(width,height)),
+				newsum = 0, oldsum = 0;
+			int newWidth = ceil(rescaleRatio * width), newHeight = ceil(rescaleRatio * height);
 			InfotaxisGrid rescaled(newWidth, newHeight, diff_, rate_, windvel_, windang_,
 							part_lifetime_, sensor_radius_, resolution_ * rescaleRatio, trueInfotaxis_);
 			for (Trace &t : newBacktrace) {
 				rescaled.updateProbas(t.x*rescaleRatio, t.y*rescaleRatio, t.detections, t.dt);
-					newGrid->backtrace_.push_back(t);
+				newGrid->backtrace_.push_back(t);
 			}
 			double newScale = (newWidth*newHeight)/(double)(width*height), oldScale;
 
-			for (int j = 0; j < width; j ++)
-				for (int i = 0; i < height; i ++) {
+			for (int j = 0; j < height; j ++)
+				for (int i = 0; i < width; i ++) {
 					int lowx = (int)floor(i*rescaleRatio), hix = min((int)ceil(i*rescaleRatio), newWidth-1),
 						lowy = (int)floor(j*rescaleRatio), hiy = min((int)ceil(j*rescaleRatio), newHeight-1);
 					double xo = i*rescaleRatio-lowx, yo = j*rescaleRatio-lowy;
@@ -257,8 +263,8 @@ namespace infotaxis {
 				}
 
 			double sum = 1./(oldsum + newsum);
-			for (int j = 0; j < width; j ++)
-				for (int i = 0; i < height; i ++)
+			for (int j = 0; j < height; j ++)
+				for (int i = 0; i < width; i ++)
 					newGrid->grid_[j * width + i] *= sum;
 		}
 		break;
@@ -304,12 +310,6 @@ namespace infotaxis {
 				file << separator << grid_[y * width_ + x];
 			file << endl;
 		}
-	}
-
-	void InfotaxisGrid::toCSV(string filename, string separator) {
-		auto file = ofstream(filename, ios_base::out);
-		toCSV(file, separator);
-		file.close();
 	}
 
 #ifdef PNGPP_PNG_HPP_INCLUDED

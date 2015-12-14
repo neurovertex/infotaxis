@@ -47,7 +47,10 @@ namespace infotaxis {
 		int getResolution() const {return resolution_; };
 		InfotaxisGrid *resize(int width, int height, int xoff, int yoff, ResizeMethod method = ResizeMethod::MIXED, int rescale_dim = 32);
 		void toCSV(std::ofstream& file, std::string separator = ",");
-		void toCSV(std::string filename, std::string separator = ",");
+		void toCSV(std::string filename, std::string separator = ","){
+			auto file = std::ofstream(filename, std::ios_base::out);
+			toCSV(file, separator);
+			file.close();}
 #ifdef PNGPP_PNG_HPP_INCLUDED
 		void writeProbabilityField(png::image<png::rgb_pixel> &image, int ratio);
 		void writeMeanStationaryField(png::image<png::rgb_pixel> &image, double x0, double y0, int ratio);

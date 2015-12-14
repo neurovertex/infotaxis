@@ -192,7 +192,7 @@ void simulate(struct simul &simul, int x0, int y0, double dt, bool profiling, bo
 				", detections : " << detects << ", entropy : " << entropy << endl;
 
 		if (logfile != NULL)
-			*logfile << simul.curx <<" "<< simul.cury <<" "<< entropy <<" "<< detects << endl;
+			*logfile << grid.getWidth() <<" "<< grid.getHeight() <<" "<< simul.curx <<" "<< simul.cury <<" "<< entropy <<" "<< detects << endl;
 
 		PROFILE(updatetime[cnt] = (long)-clock();)
 		grid.updateProbas(simul.curx, simul.cury, detects, dt);
